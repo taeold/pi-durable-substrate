@@ -11,10 +11,6 @@ containers:
   - node
   - /app/server.ts
   env:
-  - name: PORT
-    value: "80"
-  - name: WORKSPACE_DIR
-    value: /workspace
   - name: GEMINI_API_KEY
     value: ate-placeholder-key
   - name: NODE_EXTRA_CA_CERTS

@@ -7,6 +7,7 @@ A simple durable AI coding agent built with [@earendil-works/pi-durable](https:/
 ```ts
 import http from "node:http";
 import { mkdir } from "node:fs/promises";
+import { json } from "node:stream/consumers";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
@@ -15,10 +16,9 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 
-const WORKSPACE = process.env.WORKSPACE_DIR || "/workspace";
-await mkdir(`${WORKSPACE}/.pi`, { recursive: true });
+await mkdir("/workspace/.pi", { recursive: true });
 
-const storage = await openNodeSqliteStorage(`${WORKSPACE}/.pi/agent.sqlite`);
+const storage = await openNodeSqliteStorage("/workspace/.pi/agent.sqlite");
 const models = createModels();
 models.setProvider(googleProvider());
 
@@ -27,26 +27,18 @@ registry.install(CodingTools);
 
 const harness = await Harness.open(
   storage,
-  { models, registry, env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd || WORKSPACE }) },
+  { models, registry, env: () => new NodeExecutionEnv({ cwd: "/workspace" }) },
   context,
 );
 const conversation = await harness.root(context, {
-  agent: { model: { provider: "google", modelId: "gemini-3.8-flash" }, cwd: WORKSPACE },
+  agent: { model: { provider: "google", modelId: "gemini-3.8-flash" }, cwd: "/workspace" },
 });
 await harness.resume(context);
 
 const server = http.createServer(async (req, res) => {
-  if (req.url === "/readyz" || req.url === "/healthz") return res.end("ok\n");
-  if (req.method === "GET") {
-    const view = await conversation.context(context);
-    return res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(view));
-  }
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const { prompt, whenBusy = req.url === "/steer" ? "steer" : "followUp" } = JSON.parse(
-    Buffer.concat(chunks).toString() || "{}",
-  );
-  const sub = await conversation.submit({ type: "input", content: prompt, whenBusy }, context);
+  if (req.url === "/readyz") return res.end("ok\n");
+  const { prompt } = (await json(req)) as { prompt: string };
+  const sub = await conversation.submit({ type: "input", content: prompt, whenBusy: "followUp" }, context);
   const settled = await sub.wait(context);
   await conversation.waitForIdle(context);
   const view = await conversation.context(context);
@@ -57,7 +49,7 @@ process.on("SIGTERM", async () => {
   await harness.close(context);
   server.close(() => process.exit(0));
 });
-server.listen(Number(process.env.PORT || 80), "0.0.0.0");
+server.listen(80, "0.0.0.0");
 ```
 
 ## How it works
@@ -129,100 +121,22 @@ curl -X POST http://localhost:8000/submit \
   -d '{"prompt": "Create app.js with add(a, b) and a test.js that verifies it."}'
 ```
 
-Response (`200 OK`):
+Response snippet:
 
 ```json
 {
-  "settled": {
-    "conversationId": 1,
-    "type": "input",
-    "status": "done",
-    "entry": 7,
-    "id": 8,
-    "answer": 21
-  },
+  "settled": { "conversationId": 1, "type": "input", "status": "done", "entry": 7, "id": 8, "answer": 21 },
   "view": {
-    "entries": [ "..." ],
-    "contributions": [],
     "messages": [
-      {
-        "role": "user",
-        "content": "Create app.js with add(a, b) and a test.js that verifies it."
-      },
-      {
-        "role": "system",
-        "content": "",
-        "toolsAdded": [
-          { "name": "read" },
-          { "name": "write" },
-          { "name": "edit" },
-          { "name": "bash" }
-        ]
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "toolUse",
-        "content": [
-          {
-            "type": "toolCall",
-            "name": "write",
-            "arguments": {
-              "path": "app.js",
-              "content": "export function add(a, b) {\n  return a + b;\n}\n"
-            }
-          },
-          {
-            "type": "toolCall",
-            "name": "write",
-            "arguments": {
-              "path": "test.js",
-              "content": "import assert from \"node:assert/strict\";\nimport { add } from \"./app.js\";\nassert.equal(add(2, 3), 5);\nconsole.log(\"ok\");\n"
-            }
-          }
-        ]
-      },
-      {
-        "role": "toolResult",
-        "toolName": "write",
-        "content": [{ "type": "text", "text": "Successfully wrote to app.js" }],
-        "isError": false
-      },
-      {
-        "role": "toolResult",
-        "toolName": "write",
-        "content": [{ "type": "text", "text": "Successfully wrote to test.js" }],
-        "isError": false
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "toolUse",
-        "content": [
-          {
-            "type": "toolCall",
-            "name": "bash",
-            "arguments": { "command": "node test.js" }
-          }
-        ]
-      },
-      {
-        "role": "toolResult",
-        "toolName": "bash",
-        "content": [{ "type": "text", "text": "ok\n" }],
-        "isError": false
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "stop",
-        "content": [
-          {
-            "type": "text",
-            "text": "Created `app.js` with `add(a, b)` and verified it with `node test.js` (output: `ok`)."
-          }
-        ]
-      }
+      { "role": "user", "content": "Create app.js with add(a, b) and a test.js that verifies it." },
+      { "role": "assistant", "model": "gemini-3.8-flash", "stopReason": "toolUse", "content": [
+        { "type": "toolCall", "name": "write", "arguments": { "path": "app.js", "content": "export function add(a, b) {\n  return a + b;\n}\n" } },
+        { "type": "toolCall", "name": "write", "arguments": { "path": "test.js", "content": "import assert from \"node:assert/strict\";\nimport { add } from \"./app.js\";\nassert.equal(add(2, 3), 5);\nconsole.log(\"ok\");\n" } }
+      ]},
+      { "role": "toolResult", "toolName": "bash", "content": [{ "type": "text", "text": "ok\n" }] },
+      { "role": "assistant", "model": "gemini-3.8-flash", "stopReason": "stop", "content": [
+        { "type": "text", "text": "Created `app.js` with `add(a, b)` and verified it with `node test.js` (output: `ok`)." }
+      ]}
     ]
   }
 }
@@ -242,7 +156,7 @@ kubectl ate create egress-policy demo-agent-fork -a ate-demo-pi -f egress-policy
 
 ### 5. Send divergent prompts to both branches
 
-Both actors auto-resume on demand from the shared Turn 1 history (`entry: 7..21`) and diverge cleanly on Turn 2 (`entry: 22`, `submissionId: 23`):
+Both actors auto-resume on demand from the shared Turn 1 history (`entry: 7..21`) and diverge on Turn 2 (`entry: 22`):
 
 ```bash
 # Original actor continues on Branch A
@@ -250,70 +164,7 @@ curl -X POST http://localhost:8000/submit \
   -H "ate-target-actor: ate-demo-pi/demo-agent" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Add multiply(a, b) and structured logging to app.js."}'
-```
 
-Response from `demo-agent` (`200 OK`):
-
-```json
-{
-  "settled": {
-    "conversationId": 1,
-    "type": "input",
-    "status": "done",
-    "entry": 22,
-    "id": 23,
-    "answer": 37
-  },
-  "view": {
-    "messages": [
-      "... (Turn 1 messages 0..7 preserved from checkpoint-v1) ...",
-      {
-        "role": "user",
-        "content": "Add multiply(a, b) and structured logging to app.js."
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "toolUse",
-        "content": [
-          {
-            "type": "toolCall",
-            "name": "edit",
-            "arguments": {
-              "path": "app.js",
-              "edits": [
-                {
-                  "oldText": "export function add(a, b) {\n  return a + b;\n}",
-                  "newText": "export function add(a, b) {\n  console.log(JSON.stringify({ op: \"add\", a, b }));\n  return a + b;\n}\n\nexport function multiply(a, b) {\n  console.log(JSON.stringify({ op: \"multiply\", a, b }));\n  return a * b;\n}"
-                }
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "role": "toolResult",
-        "toolName": "edit",
-        "content": [{ "type": "text", "text": "Successfully edited app.js" }],
-        "isError": false
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "stop",
-        "content": [
-          {
-            "type": "text",
-            "text": "Added `multiply(a, b)` and JSON structured logging to `app.js`."
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-```bash
 # Forked actor continues on Branch B
 curl -X POST http://localhost:8000/submit \
   -H "ate-target-actor: ate-demo-pi/demo-agent-fork" \
@@ -321,81 +172,33 @@ curl -X POST http://localhost:8000/submit \
   -d '{"prompt": "Add divide(a, b) and edge-case tests to test.js."}'
 ```
 
-Response from `demo-agent-fork` (`200 OK`):
+Response snippets:
 
 ```json
+// demo-agent (Branch A):
 {
-  "settled": {
-    "conversationId": 1,
-    "type": "input",
-    "status": "done",
-    "entry": 22,
-    "id": 23,
-    "answer": 37
-  },
+  "settled": { "conversationId": 1, "status": "done", "entry": 22, "id": 23, "answer": 37 },
   "view": {
     "messages": [
       "... (Turn 1 messages 0..7 preserved from checkpoint-v1) ...",
-      {
-        "role": "user",
-        "content": "Add divide(a, b) and edge-case tests to test.js."
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "toolUse",
-        "content": [
-          {
-            "type": "toolCall",
-            "name": "edit",
-            "arguments": {
-              "path": "app.js",
-              "edits": [
-                {
-                  "oldText": "export function add(a, b) {\n  return a + b;\n}",
-                  "newText": "export function add(a, b) {\n  return a + b;\n}\n\nexport function divide(a, b) {\n  if (b === 0) throw new RangeError(\"Division by zero\");\n  return a / b;\n}"
-                }
-              ]
-            }
-          },
-          {
-            "type": "toolCall",
-            "name": "edit",
-            "arguments": {
-              "path": "test.js",
-              "edits": [
-                {
-                  "oldText": "import { add } from \"./app.js\";\nassert.equal(add(2, 3), 5);",
-                  "newText": "import { add, divide } from \"./app.js\";\nassert.equal(add(2, 3), 5);\nassert.equal(divide(10, 2), 5);\nassert.throws(() => divide(1, 0), RangeError);"
-                }
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "role": "toolResult",
-        "toolName": "edit",
-        "content": [{ "type": "text", "text": "Successfully edited app.js" }],
-        "isError": false
-      },
-      {
-        "role": "toolResult",
-        "toolName": "edit",
-        "content": [{ "type": "text", "text": "Successfully edited test.js" }],
-        "isError": false
-      },
-      {
-        "role": "assistant",
-        "model": "gemini-3.8-flash",
-        "stopReason": "stop",
-        "content": [
-          {
-            "type": "text",
-            "text": "Added `divide(a, b)` to `app.js` and division-by-zero edge-case assertions to `test.js`."
-          }
-        ]
-      }
+      { "role": "user", "content": "Add multiply(a, b) and structured logging to app.js." },
+      { "role": "assistant", "model": "gemini-3.8-flash", "stopReason": "stop", "content": [
+        { "type": "text", "text": "Added `multiply(a, b)` and JSON structured logging to `app.js`." }
+      ]}
+    ]
+  }
+}
+
+// demo-agent-fork (Branch B):
+{
+  "settled": { "conversationId": 1, "status": "done", "entry": 22, "id": 23, "answer": 37 },
+  "view": {
+    "messages": [
+      "... (Turn 1 messages 0..7 preserved from checkpoint-v1) ...",
+      { "role": "user", "content": "Add divide(a, b) and edge-case tests to test.js." },
+      { "role": "assistant", "model": "gemini-3.8-flash", "stopReason": "stop", "content": [
+        { "type": "text", "text": "Added `divide(a, b)` to `app.js` and division-by-zero edge-case assertions to `test.js`." }
+      ]}
     ]
   }
 }
