@@ -1,8 +1,8 @@
-# `pi-durable-substrate`
+# pi-durable-substrate
 
-A ~50-line durable AI coding agent built with [`@earendil-works/pi-durable`](https://github.com/earendil-works/pi/tree/main/packages/durable) (`CodingTools` + `gemini-3.8-flash`) running inside [Agent Substrate (`agent-substrate/substrate`)](https://github.com/agent-substrate/substrate) gVisor sandboxes on Kubernetes (`kind` or GKE).
+A simple durable AI coding agent built with [`@earendil-works/pi-durable`](https://github.com/earendil-works/pi/tree/main/packages/durable) running on [Agent Substrate](https://github.com/agent-substrate/substrate).
 
-## The Entire Agent Server (`server.ts`)
+## `server.ts`
 
 ```ts
 import http from "node:http";
@@ -60,31 +60,20 @@ process.on("SIGTERM", async () => {
 server.listen(Number(process.env.PORT || 80), "0.0.0.0");
 ```
 
----
+## How it works
 
-## Architecture: How `@earendil-works/pi-durable` and Agent Substrate Fit Together
+`pi-durable` runs the coding agent loop and writes every conversation turn and tool checkpoint to a SQLite database at `/workspace/.pi/agent.sqlite`.
 
-1. **Built-In `CodingTools` (`read`, `write`, `edit`, `bash`)**:
-   `@earendil-works/pi-durable/tools` ships `CodingTools`, a pre-built extension providing durable `read`, `write`, `edit`, and `bash` tools bound to `NodeExecutionEnv({ cwd: "/workspace" })`. Read-only/idempotent file operations (`read`, `write`, `edit`) are marked `replay: "safe"` so interrupted mid-turn executions automatically replay on recovery, while `bash` is marked `replay: "unsafe"` so a crash mid-command surfaces a structured interruption to the model rather than blindly re-running side effects.
-2. **`SNAPSHOT_CONTENT_SCOPE_DATA` + `/workspace/.pi/agent.sqlite`**:
-   Because `@earendil-works/pi-durable` persists every conversation entry, tool checkpoint, and `pi.inbox` steering item into `/workspace/.pi/agent.sqlite` (using Node 24's built-in `node:sqlite`), the `ActorTemplate` only needs `SNAPSHOT_CONTENT_SCOPE_DATA` on `/workspace` (`durableDir: {}`). On `kubectl ate suspend actor`, `SIGTERM` triggers `await harness.close(context)` to flush SQLite cleanly before `/workspace` is snapshotted to object storage and the worker pod is freed.
-3. **Snapshot Tagging & Actor Branching (`CreateTag` + `CreateActor --tag`)**:
-   Any suspended actor's `/workspace` + SQLite state can be tagged as an immutable checkpoint and forked into new independent actors:
-   ```bash
-   kubectl ate suspend actor demo-agent -a ate-demo-pi
-   kubectl ate create tag checkpoint-v1 --actor demo-agent -a ate-demo-pi
-   kubectl ate create actor demo-agent-fork --template pi-durable-data --tag checkpoint-v1 -a ate-demo-pi
-   ```
-   When you send different Turn 2 prompts via `curl -H "ate-target-actor: ate-demo-pi/demo-agent"` and `curl -H "ate-target-actor: ate-demo-pi/demo-agent-fork"`, `atenet-router` automatically wakes both actors on separate worker pods from the shared Turn 1 SQLite transcript and `/workspace` files, and their state diverges cleanly.
-4. **Zero-Secret `EgressPolicy` Credential Injection**:
-   In `template.yaml`, the actor is given a placeholder `GEMINI_API_KEY="ate-placeholder-key"` and trusts the `egress-mitm.ate.dev` CA bundle via `NODE_EXTRA_CA_CERTS=/run/ate/trust-bundle.pem`. When `googleProvider()` (`gemini-3.8-flash`) calls `https://generativelanguage.googleapis.com/v1beta`, `atenet-egress` intercepts the outbound request and replaces `x-goog-api-key` with the real secret fetched from the credential provider (`egress-policy.yaml`) — ensuring real API keys never enter actor memory, `/workspace`, or snapshots.
+Agent Substrate runs each agent as an isolated actor with `/workspace` mounted as a durable directory (`durableDir` in `template.yaml`).
 
----
+1. **Suspend and auto-resume**: When you suspend an actor (`kubectl ate suspend actor`), Agent Substrate sends `SIGTERM` so `pi-durable` flushes SQLite, snapshots `/workspace` to object storage, and stops the container. When the next HTTP request arrives for that actor, the router restores `/workspace` onto a worker pod and wakes the server back up before forwarding the request.
+2. **Checkpoint and fork**: Because both the agent history (`agent.sqlite`) and the working files live in `/workspace`, you can tag a suspended actor (`kubectl ate create tag`) and create a new actor from that tag (`kubectl ate create actor --tag`). Both actors start from the same history and files, then diverge on subsequent requests.
+3. **Egress credential injection**: The sandbox runs with a placeholder `GEMINI_API_KEY`. Outbound calls to `generativelanguage.googleapis.com` pass through the Agent Substrate egress proxy, which injects the real API key from `egress-policy.yaml` so secrets never enter the sandbox or its snapshots.
 
 ## Quickstart
 
 ```bash
-# 1. Build and push the actor image pinned by digest
+# 1. Build and push the actor image
 docker build -t localhost:5001/pi-durable-actor:latest .
 docker push localhost:5001/pi-durable-actor:latest
 DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' localhost:5001/pi-durable-actor:latest)
@@ -95,7 +84,7 @@ kubectl apply -f workerpool.yaml
 kubectl ate create atespace ate-demo-pi
 kubectl ate create actor-template -f template.yaml
 
-# 3. Port-forward atenet-router and run the 5-step walkthrough
+# 3. Port-forward the router and run the demo
 kubectl port-forward -n ate-system svc/atenet-router 8000:80 &
 ./demo.sh
 ```
