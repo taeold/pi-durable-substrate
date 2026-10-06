@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ate-demo-pi
+  labels:
+    ate.dev/worker-pool: "true"
+---
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: pi-durable
+  namespace: ate-demo-pi
+spec:
+  replicas: 2
+  sandboxConfig:
+    gvisorConfig: {}
+  template:
+    spec:
+      containers:
+      - name: ateom
+        image: localhost:5001/ateom-gvisor:latest
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"

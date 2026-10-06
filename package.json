@@ -1,0 +1,19 @@
+{
+  "name": "pi-durable-substrate",
+  "version": "0.1.0",
+  "description": "Durable AI Coding Agent using @earendil-works/pi-durable on Agent Substrate (GKE / kind)",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node server.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "^1.0.4",
+    "@earendil-works/pi-ai": "^1.0.4",
+    "@earendil-works/pi-durable": "^1.0.4",
+    "@sinclair/typebox": "^0.34.0"
+  }
+}
