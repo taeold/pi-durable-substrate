@@ -95,8 +95,12 @@ sed -i "s|image: .*|image: ${DIGEST}|" template.yaml
 VERSION=$(kubectl get ds -n ate-system -l app=atelet -o jsonpath='{.items[0].metadata.labels.ate\.dev/substrate-version}')
 sed -i "s|SUBSTRATE_VERSION|${VERSION}|" workerpool.yaml
 kubectl apply -f workerpool.yaml
+kubectl -n ate-demo-pi rollout status deployment/pi-durable
+
+# Create the atespace and actor template, then wait until GOLDEN TAG is populated
 kubectl ate create atespace ate-demo-pi
 kubectl ate create actor-template -f template.yaml
+kubectl ate get actor-template pi-durable-data -a ate-demo-pi
 
 # Create the Gemini API key secret and allow ate-demo-pi to use it at the egress proxy
 kubectl -n ate-demo-pi create secret generic llm-credentials \
@@ -172,15 +176,13 @@ curl -X POST http://localhost:8000/submit \
   -d '{"prompt": "Add divide(a, b) and edge-case tests to test.js."}'
 ```
 
-Response snippets:
+Response snippet from `demo-agent` (Branch A):
 
 ```json
-// demo-agent (Branch A):
 {
   "settled": { "conversationId": 1, "status": "done", "entry": 22, "id": 23, "answer": 37 },
   "view": {
     "messages": [
-      "... (Turn 1 messages 0..7 preserved from checkpoint-v1) ...",
       { "role": "user", "content": "Add multiply(a, b) and structured logging to app.js." },
       { "role": "assistant", "model": "gemini-3.8-flash", "stopReason": "stop", "content": [
         { "type": "text", "text": "Added `multiply(a, b)` and JSON structured logging to `app.js`." }
@@ -188,13 +190,15 @@ Response snippets:
     ]
   }
 }
+```
 
-// demo-agent-fork (Branch B):
+Response snippet from `demo-agent-fork` (Branch B):
+
+```json
 {
   "settled": { "conversationId": 1, "status": "done", "entry": 22, "id": 23, "answer": 37 },
   "view": {
     "messages": [
-      "... (Turn 1 messages 0..7 preserved from checkpoint-v1) ...",
       { "role": "user", "content": "Add divide(a, b) and edge-case tests to test.js." },
       { "role": "assistant", "model": "gemini-3.8-flash", "stopReason": "stop", "content": [
         { "type": "text", "text": "Added `divide(a, b)` to `app.js` and division-by-zero edge-case assertions to `test.js`." }
