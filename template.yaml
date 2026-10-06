@@ -6,7 +6,7 @@ workerSelector:
     workload: pi-durable
 containers:
 - name: pi-durable
-  image: localhost:5001/pi-durable-actor@sha256:585ee5a01115d8a2994c472a7454dae0390306a109d1072ebe8a21a0fcf7d961
+  image: localhost:5001/pi-durable-actor@sha256:0a0695101832ffab6a8f5627d21afd22e3b7cd28940777d7f237c1894d82437b
   command:
   - node
   - /app/server.ts
