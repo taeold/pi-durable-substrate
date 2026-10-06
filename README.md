@@ -70,22 +70,52 @@ Agent Substrate runs each agent as an isolated actor with `/workspace` mounted a
 2. **Checkpoint and fork**: Because both the agent history (`agent.sqlite`) and the working files live in `/workspace`, you can tag a suspended actor (`kubectl ate create tag`) and create a new actor from that tag (`kubectl ate create actor --tag`). Both actors start from the same history and files, then diverge on subsequent requests.
 3. **Egress credential injection**: The sandbox runs with a placeholder `GEMINI_API_KEY`. Outbound calls to `generativelanguage.googleapis.com` pass through the Agent Substrate egress proxy, which injects the real API key from `egress-policy.yaml` so secrets never enter the sandbox or its snapshots.
 
-## Quickstart
+## Quickstart (local Kubernetes with kind)
 
-### 1. Build and deploy the actor template
+### 1. Start Agent Substrate on a local kind cluster
+
+Make sure you have Go, Docker, and `kubectl` installed, then spin up the local cluster and install `kubectl-ate`:
 
 ```bash
+git clone https://github.com/agent-substrate/substrate.git
+cd substrate
+hack/create-kind-cluster.sh
+hack/install-ate-kind.sh --deploy-ate-system --credential-provider='{"name":"k8s.io"}'
+go install ./cmd/kubectl-ate
+cd ..
+```
+
+### 2. Build and deploy the agent template
+
+Set your `GEMINI_API_KEY`, store it in a Kubernetes Secret for the egress proxy, and deploy the actor template:
+
+```bash
+export GEMINI_API_KEY="your-gemini-api-key"
+
+# Build and push the agent image to the local kind registry
 docker build -t localhost:5001/pi-durable-actor:latest ./agent
 docker push localhost:5001/pi-durable-actor:latest
-# Update image: in template.yaml with the pushed sha256 digest
+DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' localhost:5001/pi-durable-actor:latest)
+sed -i "s|image: .*|image: ${DIGEST}|" template.yaml
 
-kubectl apply -f workerpool.yaml
+# Create the atespace, WorkerPool, and ActorTemplate
 kubectl ate create atespace ate-demo-pi
+kubectl apply -f workerpool.yaml
 kubectl ate create actor-template -f template.yaml
+
+# Create the Gemini API key secret and allow ate-demo-pi to use it at the egress proxy
+kubectl create namespace ate-demo-pi --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n ate-demo-pi create secret generic llm-credentials \
+  --from-literal=gemini-api-key="${GEMINI_API_KEY}"
+kubectl -n ate-system patch configmap k8s-credential-provider-namespace-policy \
+  --type merge -p '{"data":{"namespace-policy.yaml":"policies:\n- atespace: ate-demo-pi\n  allowedNamespaces:\n  - ate-demo-pi\n"}}'
+kubectl -n ate-system rollout restart deployment/k8s-credential-provider
+
+# Port-forward the router
 kubectl port-forward -n ate-system svc/atenet-router 8000:80 &
 ```
 
-### 2. Create an actor and run Turn 1
+### 3. Create an actor and run Turn 1
 
 ```bash
 kubectl ate create actor demo-agent --template pi-durable-data -a ate-demo-pi
@@ -97,7 +127,7 @@ curl -X POST http://localhost:8000/submit \
   -d '{"prompt": "Create app.js with add(a, b) and a test.js that verifies it."}'
 ```
 
-### 3. Suspend, tag a checkpoint, and fork
+### 4. Suspend, tag a checkpoint, and fork
 
 ```bash
 # Suspend the actor (flushes SQLite and snapshots /workspace to object storage)
@@ -109,7 +139,7 @@ kubectl ate create actor demo-agent-fork --template pi-durable-data --tag checkp
 kubectl ate create egress-policy demo-agent-fork -a ate-demo-pi -f egress-policy.yaml
 ```
 
-### 4. Send divergent prompts to both branches
+### 5. Send divergent prompts to both branches
 
 Both actors auto-resume on demand from the shared Turn 1 history and diverge cleanly:
 
