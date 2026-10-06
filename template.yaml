@@ -1,48 +1,54 @@
-apiVersion: ate.dev/v1alpha1
-kind: ActorTemplate
 metadata:
+  atespace: ate-demo-pi
   name: pi-durable-data
-  namespace: ate-demo-pi
-spec:
-  workerPool: pi-durable
-  snapshotConfig:
-    onPause: SNAPSHOT_CONTENT_SCOPE_DATA
-    onCommit: SNAPSHOT_CONTENT_SCOPE_DATA
-  volumes:
+workerSelector:
+  matchLabels:
+    workload: pi-durable
+containers:
+- name: pi-durable
+  image: localhost:5001/pi-durable-actor@sha256:585ee5a01115d8a2994c472a7454dae0390306a109d1072ebe8a21a0fcf7d961
+  command:
+  - node
+  - /app/server.ts
+  env:
+  - name: PORT
+    value: "80"
+  - name: WORKSPACE_DIR
+    value: /workspace
+  - name: GEMINI_API_KEY
+    value: ate-placeholder-key
+  - name: NODE_EXTRA_CA_CERTS
+    value: /run/ate/trust-bundle.pem
+  wakeupProbe:
+    httpGet:
+      path: /readyz
+      port: 80
+    timeoutSeconds: 30
+  volumeMounts:
   - name: workspace
-    durableDir: {}
+    mountPath: /workspace
   - name: system-info
-    systemInfo:
-      dataSources:
-      - trustBundle:
-          names:
-          - egress-mitm.ate.dev
-          path: trust-bundle.pem
-  containers:
-  - name: pi-agent
-    # Replace with the digest returned by `docker push localhost:5001/pi-durable-actor:latest`
-    image: localhost:5001/pi-durable-actor@sha256:8fbb4f4486f64195c4bd15ea87be733ec4f06fa519e528f63601da45b2e3eccb
-    env:
-    - name: PORT
-      value: "80"
-    - name: WORKSPACE_DIR
-      value: "/workspace"
-    # Placeholder key replaced at the atenet-egress gateway via EgressPolicy:
-    - name: GEMINI_API_KEY
-      value: "ate-placeholder-key"
-    - name: NODE_EXTRA_CA_CERTS
-      value: "/run/ate/trust-bundle.pem"
-    ports:
-    - name: http
-      containerPort: 80
-    volumeMounts:
-    - name: workspace
-      mountPath: /workspace
-    - name: system-info
-      mountPath: /run/ate
-    readinessProbe:
-      httpGet:
-        path: /readyz
-        port: 80
-      periodSeconds: 1
-      failureThreshold: 30
+    mountPath: /run/ate
+resources:
+  limits:
+  - name: cpu
+    quantity: "1"
+  - name: memory
+    quantity: 512Mi
+snapshotConfig:
+  onPause: SNAPSHOT_CONTENT_SCOPE_DATA
+  onCommit: SNAPSHOT_CONTENT_SCOPE_DATA
+  storageLocation: gs://ate-snapshots/ate-demo-pi-data/
+sandboxConfig:
+  sandboxClass: SANDBOX_CLASS_GVISOR
+  configName: gvisor-default
+volumes:
+- name: workspace
+  durableDir: {}
+- name: system-info
+  systemInfo:
+    dataSources:
+    - trustBundle:
+        names:
+        - egress-mitm.ate.dev
+        path: trust-bundle.pem

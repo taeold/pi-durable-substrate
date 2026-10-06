@@ -74,20 +74,21 @@ Agent Substrate runs each agent as an isolated actor with `/workspace` mounted a
 
 ### 1. Start Agent Substrate on a local kind cluster
 
-Make sure you have Go, Docker, and `kubectl` installed, then spin up the local cluster and install `kubectl-ate`:
+Make sure you have Go, Docker, and `kubectl` installed, then spin up the local cluster, publish the worker runtime image, and install `kubectl-ate`:
 
 ```bash
 git clone https://github.com/agent-substrate/substrate.git
 cd substrate
 hack/create-kind-cluster.sh
 hack/install-ate-kind.sh --deploy-ate-system --credential-provider='{"name":"k8s.io"}'
+go run ./cmd/ate-setup --kind publish worker-images
 go install ./cmd/kubectl-ate
 cd ..
 ```
 
 ### 2. Build and deploy the agent template
 
-Set your `GEMINI_API_KEY`, store it in a Kubernetes Secret for the egress proxy, and deploy the actor template:
+Set your `GEMINI_API_KEY`, store it in a Kubernetes Secret for the egress proxy, and deploy the worker pool and actor template:
 
 ```bash
 export GEMINI_API_KEY="your-gemini-api-key"
@@ -98,13 +99,14 @@ docker push localhost:5001/pi-durable-actor:latest
 DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' localhost:5001/pi-durable-actor:latest)
 sed -i "s|image: .*|image: ${DIGEST}|" template.yaml
 
-# Create the atespace, WorkerPool, and ActorTemplate
-kubectl ate create atespace ate-demo-pi
+# Set the substrate node version in workerpool.yaml and deploy
+VERSION=$(kubectl get ds -n ate-system -l app=atelet -o jsonpath='{.items[0].metadata.labels.ate\.dev/substrate-version}')
+sed -i "s|SUBSTRATE_VERSION|${VERSION}|" workerpool.yaml
 kubectl apply -f workerpool.yaml
+kubectl ate create atespace ate-demo-pi
 kubectl ate create actor-template -f template.yaml
 
 # Create the Gemini API key secret and allow ate-demo-pi to use it at the egress proxy
-kubectl create namespace ate-demo-pi --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n ate-demo-pi create secret generic llm-credentials \
   --from-literal=gemini-api-key="${GEMINI_API_KEY}"
 kubectl -n ate-system patch configmap k8s-credential-provider-namespace-policy \
