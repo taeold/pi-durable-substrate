@@ -11,14 +11,13 @@ spec:
   volumes:
   - name: workspace
     durableDir: {}
-  # Uncomment when using EgressPolicy HTTPS interception / credential injection:
-  # - name: system-info
-  #   systemInfo:
-  #     dataSources:
-  #     - trustBundle:
-  #         names:
-  #         - egress-mitm.ate.dev
-  #         path: trust-bundle.pem
+  - name: system-info
+    systemInfo:
+      dataSources:
+      - trustBundle:
+          names:
+          - egress-mitm.ate.dev
+          path: trust-bundle.pem
   containers:
   - name: pi-agent
     # Replace with the digest returned by `docker push localhost:5001/pi-durable-actor:latest`
@@ -28,63 +27,19 @@ spec:
       value: "80"
     - name: WORKSPACE_DIR
       value: "/workspace"
-    - name: MODEL_PROVIDER
-      value: "scripted"
-    - name: MODEL_ID
-      value: "scripted-coding-agent"
-    # When using EgressPolicy credential injection with Gemini, set a placeholder key
-    # (replaced at the atenet-egress gateway before leaving the cluster):
-    # - name: GEMINI_API_KEY
-    #   value: "ate-placeholder-key"
-    # - name: NODE_EXTRA_CA_CERTS
-    #   value: "/run/ate/trust-bundle.pem"
+    # Placeholder key replaced at the atenet-egress gateway via EgressPolicy:
+    - name: GEMINI_API_KEY
+      value: "ate-placeholder-key"
+    - name: NODE_EXTRA_CA_CERTS
+      value: "/run/ate/trust-bundle.pem"
     ports:
     - name: http
       containerPort: 80
     volumeMounts:
     - name: workspace
       mountPath: /workspace
-    # - name: system-info
-    #   mountPath: /run/ate
-    readinessProbe:
-      httpGet:
-        path: /readyz
-        port: 80
-      periodSeconds: 1
-      failureThreshold: 30
----
-apiVersion: ate.dev/v1alpha1
-kind: ActorTemplate
-metadata:
-  name: pi-durable-full
-  namespace: ate-demo-pi
-spec:
-  workerPool: pi-durable
-  snapshotConfig:
-    onPause: SNAPSHOT_CONTENT_SCOPE_FULL
-    onCommit: SNAPSHOT_CONTENT_SCOPE_FULL
-  volumes:
-  - name: workspace
-    durableDir: {}
-  containers:
-  - name: pi-agent
-    # Replace with the digest returned by `docker push localhost:5001/pi-durable-actor:latest`
-    image: localhost:5001/pi-durable-actor@sha256:8fbb4f4486f64195c4bd15ea87be733ec4f06fa519e528f63601da45b2e3eccb
-    env:
-    - name: PORT
-      value: "80"
-    - name: WORKSPACE_DIR
-      value: "/workspace"
-    - name: MODEL_PROVIDER
-      value: "scripted"
-    - name: MODEL_ID
-      value: "scripted-coding-agent"
-    ports:
-    - name: http
-      containerPort: 80
-    volumeMounts:
-    - name: workspace
-      mountPath: /workspace
+    - name: system-info
+      mountPath: /run/ate
     readinessProbe:
       httpGet:
         path: /readyz
