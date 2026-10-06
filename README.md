@@ -1,8 +1,8 @@
 # pi-durable-substrate
 
-A simple durable AI coding agent built with [`@earendil-works/pi-durable`](https://github.com/earendil-works/pi/tree/main/packages/durable) running on [Agent Substrate](https://github.com/agent-substrate/substrate).
+A simple durable AI coding agent built with [@earendil-works/pi-durable](https://github.com/earendil-works/pi/tree/main/packages/durable) running on [Agent Substrate](https://github.com/agent-substrate/substrate).
 
-## `server.ts`
+## agent/server.ts
 
 ```ts
 import http from "node:http";
@@ -72,19 +72,57 @@ Agent Substrate runs each agent as an isolated actor with `/workspace` mounted a
 
 ## Quickstart
 
-```bash
-# 1. Build and push the actor image
-docker build -t localhost:5001/pi-durable-actor:latest .
-docker push localhost:5001/pi-durable-actor:latest
-DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' localhost:5001/pi-durable-actor:latest)
-# Update image: in template.yaml with ${DIGEST}
+### 1. Build and deploy the actor template
 
-# 2. Deploy WorkerPool, Atespace, and ActorTemplate
+```bash
+docker build -t localhost:5001/pi-durable-actor:latest ./agent
+docker push localhost:5001/pi-durable-actor:latest
+# Update image: in template.yaml with the pushed sha256 digest
+
 kubectl apply -f workerpool.yaml
 kubectl ate create atespace ate-demo-pi
 kubectl ate create actor-template -f template.yaml
-
-# 3. Port-forward the router and run the demo
 kubectl port-forward -n ate-system svc/atenet-router 8000:80 &
-./demo.sh
+```
+
+### 2. Create an actor and run Turn 1
+
+```bash
+kubectl ate create actor demo-agent --template pi-durable-data -a ate-demo-pi
+kubectl ate create egress-policy demo-agent -a ate-demo-pi -f egress-policy.yaml
+
+curl -X POST http://localhost:8000/submit \
+  -H "ate-target-actor: ate-demo-pi/demo-agent" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Create app.js with add(a, b) and a test.js that verifies it."}'
+```
+
+### 3. Suspend, tag a checkpoint, and fork
+
+```bash
+# Suspend the actor (flushes SQLite and snapshots /workspace to object storage)
+kubectl ate suspend actor demo-agent -a ate-demo-pi
+
+# Tag the snapshot and fork a second actor from that checkpoint
+kubectl ate create tag checkpoint-v1 --actor demo-agent -a ate-demo-pi
+kubectl ate create actor demo-agent-fork --template pi-durable-data --tag checkpoint-v1 -a ate-demo-pi
+kubectl ate create egress-policy demo-agent-fork -a ate-demo-pi -f egress-policy.yaml
+```
+
+### 4. Send divergent prompts to both branches
+
+Both actors auto-resume on demand from the shared Turn 1 history and diverge cleanly:
+
+```bash
+# Original actor continues on Branch A
+curl -X POST http://localhost:8000/submit \
+  -H "ate-target-actor: ate-demo-pi/demo-agent" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Add multiply(a, b) and structured logging to app.js."}'
+
+# Forked actor continues on Branch B
+curl -X POST http://localhost:8000/submit \
+  -H "ate-target-actor: ate-demo-pi/demo-agent-fork" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Add divide(a, b) and edge-case tests to test.js."}'
 ```

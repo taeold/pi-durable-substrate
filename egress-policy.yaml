@@ -1,10 +1,3 @@
-# Apply to an actor with:
-#   kubectl ate create egress-policy <actor-name> -a ate-demo-pi -f egress-policy.yaml
-#
-# The actor sends a placeholder header (e.g. GEMINI_API_KEY="ate-placeholder-key"),
-# and atenet-egress replaces the header value with the real secret resolved from
-# the credential provider before forwarding the TLS connection upstream.
-# This ensures real API keys never enter actor memory, /workspace, or snapshots.
 rules:
 - https:
     hostnames:
@@ -13,18 +6,3 @@ rules:
       replaceHeaders:
       - header: x-goog-api-key
         credentialUri: ate-secret://k8s.io/default/ate-demo-pi/llm-credentials/gemini-api-key
-- https:
-    hostnames:
-    - "api.anthropic.com"
-    effects:
-      replaceHeaders:
-      - header: x-api-key
-        credentialUri: ate-secret://k8s.io/default/ate-demo-pi/llm-credentials/anthropic-api-key
-- https:
-    hostnames:
-    - "api.openai.com"
-    effects:
-      replaceHeaders:
-      - header: Authorization
-        prefix: "Bearer "
-        credentialUri: ate-secret://k8s.io/default/ate-demo-pi/llm-credentials/openai-api-key
